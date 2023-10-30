@@ -1,0 +1,55 @@
+import org.apache.spark.ml.{Pipeline, PipelineModel}
+import org.apache.spark.ml.classification.LogisticRegression
+import org.apache.spark.ml.feature.{HashingTF, Tokenizer}
+import org.apache.spark.ml.linalg.Vector
+import org.apache.spark.sql.Row
+
+// Chuẩn bị tài liệu có tên là "training" với các bộ dữ liệu (id, text, label) 
+val training = spark.createDataFrame(Seq(
+  (0L, "a b c d e spark", 1.0),
+  (1L, "b d", 0.0),
+  (2L, "spark f g h", 1.0),
+  (3L, "hadoop mapreduce", 0.0)
+)).toDF("id", "text", "label")
+
+// Định cấu hình quy trình ML, bao gồm ba giai đoạn: tokenizer, hashingTF và lr.
+val tokenizer = new Tokenizer()
+  .setInputCol("text")
+  .setOutputCol("words")
+val hashingTF = new HashingTF()
+  .setNumFeatures(1000)
+  .setInputCol(tokenizer.getOutputCol)
+  .setOutputCol("features")
+val lr = new LogisticRegression()
+  .setMaxIter(10)
+  .setRegParam(0.001)
+val pipeline = new Pipeline()
+  .setStages(Array(tokenizer, hashingTF, lr))
+
+// Điều chỉnh quy trình phù hợp với tài liệu "training".
+val model = pipeline.fit(training)
+
+// Bây giờ chúng ta có thể tùy chọn lưu đường ống được trang bị vào đĩa
+model.write.overwrite().save("/tmp/spark-logistic-regression-model")
+
+// Chúng tôi cũng có thể lưu đường dẫn không phù hợp này vào đĩa
+pipeline.write.overwrite().save("/tmp/unfit-lr-model")
+
+// Và tải lại trong quá trình sản xuất
+val sameModel = PipelineModel.load("/tmp/spark-logistic-regression-model")
+
+// Chuẩn bị các tài liệu kiểm thử, là các bộ dữ liệu không được gắn nhãn. (id, text)
+val test = spark.createDataFrame(Seq(
+  (4L, "spark i j k"),
+  (5L, "l m n"),
+  (6L, "spark hadoop spark"),
+  (7L, "apache hadoop")
+)).toDF("id", "text")
+
+// Đưa ra dự đoán trên tài liệu kiểm tra.
+model.transform(test)
+  .select("id", "text", "probability", "prediction")
+  .collect()
+  .foreach { case Row(id: Long, text: String, prob: Vector, prediction: Double) =>
+    println(s"($id, $text) --> prob=$prob, prediction=$prediction")
+  }
